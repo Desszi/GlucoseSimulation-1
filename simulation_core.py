@@ -17,7 +17,7 @@ from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
 
 
-TIMESTEPS = 500  
+TIMESTEPS = 50000  
 PATIENT_NAME = "adult#002"
 
 # === Utility ===
@@ -255,16 +255,30 @@ class ModelTrainer:
 
             if model is None:
                 print(f"Training new model: {model_name}")
+                # Configure per-model training budget and exploration to help inner/high models learn
+                # Give inner and high models more timesteps and a bit more action noise to encourage exploration
+                per_model_steps = self.config.time_steps
+                extra_multiplier = 1
+                if model_name in {"innermodel", "highmodel"}:
+                    extra_multiplier = 3
+                per_model_steps = int(self.config.time_steps * extra_multiplier)
+
                 if self.config.model_type == "A2C":
+                    print(f"[Training] Using A2C for {model_name} with timesteps={per_model_steps}")
                     model = A2C("MlpPolicy", env, verbose=1)
+                    model.learn(total_timesteps=per_model_steps, callback=callback)
                 else:
+                    # increase exploration sigma for inner/high models
+                    base_sigma = 0.1
+                    if model_name in {"innermodel", "highmodel"}:
+                        base_sigma = 0.2
                     action_noise = NormalActionNoise(
                         mean=np.zeros(env.action_space.shape[-1]),
-                        sigma=0.1 * np.ones(env.action_space.shape[-1])
+                        sigma=base_sigma * np.ones(env.action_space.shape[-1])
                     )
+                    print(f"[Training] Using TD3 for {model_name} with timesteps={per_model_steps} and noise_sigma={base_sigma}")
                     model = TD3("MlpPolicy", env, action_noise=action_noise, verbose=1)
-
-                model.learn(total_timesteps=self.config.time_steps, callback=callback)
+                    model.learn(total_timesteps=per_model_steps, callback=callback)
                 if not use_existing_models:
                     save_model(model, base_dir, model_name)
                     callback.save_to_csv(base_dir / f"{model_name}_rewards.csv")
@@ -293,11 +307,13 @@ class SimulationRunner:
         obs_array = np.array([obs])
         if value > 130:
             action, _ = self.highmodel.predict(obs_array, deterministic=True)
+            return action, 'highmodel'
         elif 70 < value <= 130:
             action, _ = self.innermodel.predict(obs_array, deterministic=True)
+            return action, 'innermodel'
         else:
             action, _ = self.lowmodel.predict(obs_array, deterministic=True)
-        return action
+            return action, 'lowmodel'
 
     def apply_insulin_rules(self, action, observation, risk, current_time):
         """Decide a safe insulin dose with IOB-based safety checks.
@@ -427,19 +443,53 @@ class SimulationRunner:
                 self.frames.append(np.array(screen))
 
             current_time += timedelta(minutes=3)
-            action = self.select_action(obs)
-            action = self.apply_insulin_rules(action, obs[0], risk, current_time)
-            obs, reward, terminated, truncated, info = self.env.step(action)
+            action, selected_model = self.select_action(obs)
+            raw_action = float(np.array(action).ravel()[0]) if hasattr(action, '__iter__') or isinstance(action, np.ndarray) else float(action)
+            dose = self.apply_insulin_rules(action, obs[0], risk, current_time)
+            obs, reward, terminated, truncated, info = self.env.step(dose)
             risk = info.get("risk", 0)
 
             self.log_data.append({
-                "action": action,
+                "selected_model": selected_model,
+                "raw_action": raw_action,
+                "dose": dose,
                 "blood glucose": obs[0],
                 "reward": reward,
                 "meal": info.get("meal", 0),
                 "risk": risk,
                 "time": current_time.strftime("%H:%M")
             })
+
+        # After run, produce a small summary of model selection and dosing
+        try:
+            df = pd.DataFrame(self.log_data)
+            summary = {}
+            for m in ['lowmodel', 'innermodel', 'highmodel']:
+                subset = df[df['selected_model'] == m]
+                if subset.empty:
+                    summary[m] = {'count': 0}
+                    continue
+                summary[m] = {
+                    'count': int(len(subset)),
+                    'nonzero_doses': int((subset['dose'] > 0).sum()),
+                    'raw_action_mean': float(subset['raw_action'].mean()),
+                    'raw_action_std': float(subset['raw_action'].std()),
+                    'dose_mean': float(subset['dose'].mean()),
+                    'dose_std': float(subset['dose'].std())
+                }
+            out_path = getattr(self, 'env', None)
+            # try to save under path_to_results if available
+            try:
+                import json
+                path = getattr(self, 'path_to_results', None)
+                if path is not None:
+                    with open(path / 'model_selection_summary.json', 'w') as f:
+                        json.dump(summary, f, indent=2)
+                    print(Fore.GREEN + f"Saved model selection summary to {path / 'model_selection_summary.json'}")
+            except Exception:
+                pass
+        except Exception:
+            pass
 
         return self.frames, self.log_data
 
