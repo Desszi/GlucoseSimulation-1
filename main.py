@@ -21,13 +21,25 @@ def main():
     env, lowenv, innerenv, highenv = env_mgr.create_environments()
 
     # Train Models
-    # Train Models
     trainer = ModelTrainer(lowenv, innerenv, highenv, config)
     lowmodel, innermodel, highmodel = trainer.train_or_load_models(use_existing_models=False)
 
     # Run the simulation
     runner = SimulationRunner(env, lowmodel, innermodel, highmodel, config)
     frames, log_data = runner.run()
+
+    # Optional: run SHAP analysis if shap installed and helper available
+    try:
+        from analysis.shap_helper import run_shap_analysis
+        # Run SHAP for each of the three specialization models
+        for m, name in [(lowmodel, 'lowmodel'), (innermodel, 'innermodel'), (highmodel, 'highmodel')]:
+            try:
+                print(f"[Main] Running SHAP analysis on {name}...")
+                run_shap_analysis(m, log_data, env_mgr.path_to_results, model_name=name)
+            except Exception as e:
+                print(f"[Main] SHAP for {name} skipped: {e}")
+    except Exception as e:
+        print(f"[Main] SHAP analysis skipped entirely: {e}")
 
     # Save Result and metrics
     saver = DataSaver(env_mgr.path_to_results, config)
