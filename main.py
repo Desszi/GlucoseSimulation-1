@@ -21,6 +21,7 @@ def main():
     env, lowenv, innerenv, highenv = env_mgr.create_environments()
 
     # Train Models
+    # Train Models
     trainer = ModelTrainer(lowenv, innerenv, highenv, config)
     lowmodel, innermodel, highmodel = trainer.train_or_load_models(use_existing_models=False)
 

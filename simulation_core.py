@@ -17,7 +17,7 @@ from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
 
 
-TIMESTEPS = 300
+TIMESTEPS = 50000  
 PATIENT_NAME = "adult#002"
 
 # === Utility ===
@@ -138,7 +138,7 @@ class SimulationConfig:
         self.patient_name = PATIENT_NAME
         self.start_time = datetime(2025, 1, 1, 0, 0, 0)
         self.time_steps = TIMESTEPS
-        self.max_episode_steps = 480
+        self.max_episode_steps = 1000000
         self.model_type = model_type
         self.model_name = model_type
 
@@ -286,6 +286,7 @@ class SimulationRunner:
         self.frames = []
         self.log_data = []
         self.insulin_timestamps = []
+        self.insulin_history = []  # list of (time, dose) for IOB calculation
 
     def select_action(self, obs):
         value = obs[0]
@@ -299,22 +300,117 @@ class SimulationRunner:
         return action
 
     def apply_insulin_rules(self, action, observation, risk, current_time):
-        coefficient = 1.5 * risk if risk > 1 else 1
-        action = min(action, 0.1) * coefficient
-        if observation < 125:
-            action = 0
-        action = min(action, 3.5)
+        """Decide a safe insulin dose with IOB-based safety checks.
+        - dynamic max based on recent carbs
+        - enforce min interval and 3-in-2hrs rule
+        - compute insulin-on-board (IOB) and limit dose to avoid hypoglycemia
+        """
+        BASE_MAX_DOSE = 3.5
+        MAX_CAP = 10.0
+        HYPO_THRESHOLD = 70
+        TARGET_LOW = 70
+        TARGET_HIGH = 130
+        MIN_INTERVAL_MINUTES = 30  # don't give another bolus within 30 minutes unless urgent
+        IOB_DECAY_HOURS = 4.0  # insulin activity duration for simple model
+        ISF = 40.0  # mg/dL drop per 1 unit insulin (conservative default)
+        SAFETY_MARGIN = 10.0  # don't allow predicted BG to go within this margin of TARGET_LOW
 
-        # Dosing limits
-        self.insulin_timestamps = [t for t in self.insulin_timestamps if t > current_time - timedelta(hours=2)]
+        # extract scalar from model action
+        try:
+            raw = float(np.array(action).ravel()[0])
+        except Exception:
+            raw = float(action)
+
+        # compute recent carbs from last ~60 minutes (20 steps of 3 minutes)
+        steps_window = 20
+        recent_meal = 0
+        if len(self.log_data) > 0:
+            recent_entries = self.log_data[-steps_window:]
+            for entry in recent_entries:
+                recent_meal += float(entry.get("meal", 0) or 0)
+
+        # dynamic max dose based on recent carbs (simple conversion)
+        CARB_PER_UNIT = 10.0
+        extra_from_carbs = recent_meal / CARB_PER_UNIT
+        dynamic_max = min(MAX_CAP, BASE_MAX_DOSE + extra_from_carbs)
+
+        # Map raw output to dose (supporting [-1,1] policies)
+        if -1.0 <= raw <= 1.0:
+            dose = max(0.0, (raw + 1.0) / 2.0 * dynamic_max)
+        else:
+            dose = max(0.0, raw)
+
+        # apply risk multiplier
+        coefficient = 1.5 * risk if risk > 1 else 1.0
+        dose = dose * coefficient
+
+        # Safety: if hypoglycemic, block
+        if observation < HYPO_THRESHOLD:
+            dose = 0.0
+
+        # If BG is in target and there were no recent carbs, do not dose
+        if TARGET_LOW <= observation <= TARGET_HIGH and recent_meal == 0:
+            dose = 0.0
+
+        # Enforce minimum interval since last bolus
+        if self.insulin_timestamps:
+            last_time = self.insulin_timestamps[-1]
+            minutes_since_last = (current_time - last_time).total_seconds() / 60.0
+            if minutes_since_last < MIN_INTERVAL_MINUTES:
+                # allow if BG is very high (>200) or big recent meal
+                if not (observation > 200 or recent_meal >= 30):
+                    dose = 0.0
+
+        # 3 injections in 2 hours safety
+        two_hour_ago = current_time - timedelta(hours=2)
+        self.insulin_timestamps = [t for t in self.insulin_timestamps if t > two_hour_ago]
+        # also prune insulin_history
+        self.insulin_history = [(t, d) for (t, d) in getattr(self, 'insulin_history', []) if t > two_hour_ago - timedelta(hours=IOB_DECAY_HOURS)]
         if len(self.insulin_timestamps) >= 3:
             print(Fore.RED + f"[Dosing Prohibited] Too many injections in last 2 hrs.")
-            action = 0
-        elif action > 0:
-            self.insulin_timestamps.append(current_time)
-            print(Fore.YELLOW + f"Injected insulin at {current_time.strftime('%H:%M')}")
+            dose = 0.0
 
-        return action
+        # Insulin-on-board (IOB) calculation (simple linear decay)
+        iob = 0.0
+        for (t, d) in getattr(self, 'insulin_history', []):
+            elapsed_h = (current_time - t).total_seconds() / 3600.0
+            if elapsed_h < IOB_DECAY_HOURS and elapsed_h >= 0:
+                remaining = max(0.0, 1.0 - (elapsed_h / IOB_DECAY_HOURS))
+                iob += d * remaining
+        predicted_drop_from_iob = iob * ISF
+
+        # Determine allowable additional drop before hitting safety margin
+        allowable_drop = observation - TARGET_LOW - SAFETY_MARGIN
+        if allowable_drop < 0:
+            allowable_drop = 0.0
+
+        # Predict bg drop if we give the proposed dose
+        predicted_drop_with_new = predicted_drop_from_iob + dose * ISF
+
+        if predicted_drop_with_new > allowable_drop:
+            # scale dose down to fit within allowable_drop
+            max_additional_units = max(0.0, (allowable_drop - predicted_drop_from_iob) / ISF)
+            dose = min(dose, max_additional_units)
+            # If after scaling dose is negligible, set to zero
+            if dose < 1e-3:
+                dose = 0.0
+
+        # Cap dose to dynamic max
+        dose = min(dose, dynamic_max)
+
+        # record if dosing
+        if dose > 0:
+            self.insulin_timestamps.append(current_time)
+            # append to insulin_history for IOB tracking
+            if not hasattr(self, 'insulin_history'):
+                self.insulin_history = []
+            self.insulin_history.append((current_time, dose))
+            print(Fore.YELLOW + f"Injected insulin at {current_time.strftime('%H:%M')} (dose={dose:.2f}, recent_carbs={recent_meal})")
+
+        # Debug (commented): raw, dose, bg, recent_meal, iob
+        # print(Fore.CYAN + f"[DEBUG] raw={raw:.3f} dose={dose:.3f} bg={observation} recent_meal={recent_meal} iob={iob:.3f}")
+
+        return dose
 
     def run(self):
         obs, info = self.env.reset()

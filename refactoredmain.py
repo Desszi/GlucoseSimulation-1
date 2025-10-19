@@ -42,43 +42,69 @@ class RewardLoggerCallback(BaseCallback):
 
 def generated_day(bw):
     from scipy import stats
-    from random import randint
-    meal = {
-        "probability": [0.95, 0.3, 0.95, 0.3, 0.95, 0.3],
-        "upperbound": [i * 60 for i in [9, 10, 14, 16, 20, 23]],
-        "lowerbound": [i * 60 for i in [5, 9, 10, 14, 16, 20]],
-        "upperboundmealtime": [i for i in [30, 10, 30, 10, 30, 10]],
-        "loverboundmealtime": [i for i in [10, 5, 10, 5, 10, 5]],
-        "meanmealtime": [i for i in [20, 7.5, 20, 7, 0.5, 20, 7.5]],
-        "meantime": [i * 60 for i in [7, 9.5, 12, 15, 18, 21.5]],
-        "variancemealtime": [i for i in [5, 2, 5, 2, 5, 2]],
-        "variancetime": [60, 30, 60, 30, 60, 30],
-        "meanamount": [i * bw for i in [0.7, 0.15, 1.1, 0.15, 1.25, 0.15]],
-        "varianceamount": [i * bw * 0.15 for i in [0.7, 0.15, 1.1, 0.15, 1.25, 0.15]],
-        "E": []
-    }
-    for i in range(0, 6):
-        value = randint(0, 100)
-        if value / 100 < meal["probability"][i]:
-            s = stats.norm(loc=meal["meanamount"][i], scale=meal["varianceamount"][i])
-            s = s.rvs(10000)[randint(0, 9999)]
-            e = round(max(0, s))
-            s = stats.truncnorm(
-                (meal["lowerbound"][i] - meal["meantime"][i]) / meal["variancetime"][i],
-                (meal["upperbound"][i] - meal["meantime"][i]) / meal["variancetime"][i],
-                loc=meal["meantime"][i], scale=meal["variancetime"][i]
-            )
-            s = s.rvs(10000)[randint(0, 9999)]
-            t = round(s)
-            s = stats.truncnorm(
-                (meal["loverboundmealtime"][i] - meal["meanmealtime"][i]) / meal["variancemealtime"][i],
-                (meal["upperboundmealtime"][i] - meal["meanmealtime"][i]) / meal["variancemealtime"][i],
-                loc=meal["meanmealtime"][i], scale=meal["variancemealtime"][i]
-            )
-            s = s.rvs(10000)[randint(0, 9999)]
-            h = round(s)
-            meal["E"].append([int(e), int(t), int(h)])
-    return meal["E"]
+    from random import randint, choices
+
+    # Define sensible meal windows (start_hour, end_hour) across full 24h
+    meal_windows = [
+        (0, 6),    # overnight / very early (low probability)
+        (6, 9),    # breakfast
+        (9, 11),   # mid-morning
+        (11, 14),  # lunch
+        (14, 17),  # afternoon
+        (17, 20),  # dinner
+        (20, 22),  # evening
+        (22, 24),  # late evening (snack)
+    ]
+
+    # Weights to prefer daytime meals, but allow late/early windows occasionally
+    window_weights = [0.05, 0.18, 0.12, 0.22, 0.12, 0.18, 0.09, 0.04]
+
+    # Number of meals per day: 3..6
+    n_meals = randint(3, 6)
+
+    # Choose windows without replacement but weighted to spread meals realistically
+    # We'll pick windows iteratively to avoid duplicates
+    available_indices = list(range(len(meal_windows)))
+    chosen_indices = []
+    weights = window_weights.copy()
+    for _ in range(n_meals):
+        idx = choices(available_indices, weights=[weights[i] for i in available_indices], k=1)[0]
+        chosen_indices.append(idx)
+        # Remove chosen index to avoid duplicate window
+        available_indices.remove(idx)
+
+    # Base meal size factors (relative to body weight) for each window index
+    base_factors = [0.1, 0.7, 0.15, 1.1, 0.15, 1.25, 0.2, 0.1]
+    variance_factors = [0.15 * f for f in base_factors]
+
+    meals = []
+    for idx in sorted(chosen_indices):
+        w = meal_windows[idx]
+        # pick a minute within the window; ensure end hour 24 maps to last minute
+        start_min = w[0] * 60
+        end_min = (w[1] * 60) - 1
+        if end_min < start_min:
+            end_min = start_min
+        time_in_minutes = randint(start_min, end_min)
+
+        mean_amount = base_factors[idx] * bw
+        var_amount = variance_factors[idx] * bw
+        # sample amount using a normal around mean_amount and clamp
+        sample_amt = max(0, stats.norm(loc=mean_amount, scale=var_amount).rvs())
+        amount = int(round(sample_amt))
+
+        # meal duration/mealtime length (small random within reasonable bounds)
+        mealtime = randint(5, 30)
+
+        # Ensure minute is within 0..1439
+        time_in_minutes = max(0, min(23 * 60 + 59, int(time_in_minutes)))
+
+        meals.append([amount, time_in_minutes, mealtime])
+
+    # Sort meals by time to produce a chronological scenario
+    meals.sort(key=lambda x: x[1])
+
+    return meals
 
 class HyperparameterTuner:
     def __init__(self, low_env, inner_env, high_env, n_trials=50, n_eval_episodes=5):
@@ -361,7 +387,7 @@ class PPOHyperparameterTuner:
             model.learn(total_timesteps=10000)  # Evaluate over 10,000 steps
             mean_reward, std_reward = evaluate_policy(
                 model,
-                env,  # Evaluate on single environment for consistency
+                env,
                 n_eval_episodes=self.n_eval_episodes,
                 deterministic=True
             )
@@ -716,27 +742,65 @@ class SimulationRunner:
         return action
 
     def apply_insulin_rules(self, action, observation, risk, current_time):
-        coefficient = 1.5 * risk if risk > 1 else 1
-        if action > 0.1:
-            action = 0.1 * coefficient
-        if observation < 125:
-            action = 0
-        action = action * coefficient
-        if action > 4:
-            action = 3.5
+        # Robustly extract scalar from model action
+        try:
+            raw = float(np.array(action).ravel()[0])
+        except Exception:
+            raw = float(action)
+
+        # Base parameters
+        BASE_MAX_DOSE = 3.5
+        MAX_CAP = 10.0  # absolute safety cap
+        HYPO_THRESHOLD = 70  # do not give insulin below this BG
+        CARB_PER_UNIT = 10.0  # carb grams per 1 unit insulin (approximate)
+
+        # Estimate recent carbohydrate intake from log_data (last 60 minutes)
+        recent_minutes = 60
+        steps_per_minute = 1 / 3  # one step = 3 minutes
+        steps_window = int(recent_minutes * steps_per_minute)
+        recent_meal = 0
+        if len(self.log_data) > 0:
+            # sum meal grams from last `steps_window` log entries
+            recent_entries = self.log_data[-steps_window:] if steps_window > 0 else self.log_data
+            for entry in recent_entries:
+                recent_meal += float(entry.get("meal", 0) or 0)
+
+        # Extra dose allowance based on carbs (simple carb-to-insulin conversion)
+        extra_dose = recent_meal / CARB_PER_UNIT
+        dynamic_max = min(MAX_CAP, BASE_MAX_DOSE + extra_dose)
+
+        # Map raw output to dose
+        if -1.0 <= raw <= 1.0:
+            dose = max(0.0, (raw + 1.0) / 2.0 * dynamic_max)
+        else:
+            dose = max(0.0, raw)
+
+        # Apply risk coefficient
+        coefficient = 1.5 * risk if risk > 1 else 1.0
+        dose = dose * coefficient
+
+        # Safety: avoid dosing in hypoglycemia
+        if observation < HYPO_THRESHOLD:
+            dose = 0.0
+
+        # Hard cap
+        dose = min(dose, dynamic_max)
+
+        # Dosing frequency limits
         two_hour_ago = current_time - timedelta(hours=2)
         self.insulin_timestamps = [t for t in self.insulin_timestamps if t > two_hour_ago]
         if len(self.insulin_timestamps) >= 3:
             print(Fore.RED + f"Dosing prohibited! ({len(self.insulin_timestamps)} / 3)")
             print(Fore.RESET)
-            action = 0
+            dose = 0.0
         else:
-            if action > 0:
+            if dose > 0:
                 self.insulin_timestamps.append(current_time)
-                print(Fore.YELLOW + f"Insulin injected: {current_time.strftime('%H:%M')}")
+                print(Fore.YELLOW + f"Insulin injected: {current_time.strftime('%H:%M')} (dose={dose:.2f})")
                 print(Fore.CYAN + f"Insulin injections in last 2 hours: {len(self.insulin_timestamps)} / 3")
                 print(Fore.RESET)
-        return action
+
+        return dose
 
     def run(self):
         logging.basicConfig(level=logging.INFO)
@@ -754,17 +818,17 @@ class SimulationRunner:
             self.frames.append(frame)
 
             action = self.select_action(observation[0])
-            #action = self.apply_insulin_rules(action, observation[0], risk, current_time)
+            action = self.apply_insulin_rules(action, observation[0], risk, current_time)
             observation, reward, terminated, truncated, info = self.env.step(action)
-            risk = info["risk"]
+            risk = info.get("risk", 0)
 
             #Log
             self.log_data.append({
                 "action": action,
                 "blood glucose": observation[0],
                 "reward": reward,
-                "meal": info["meal"],
-                "risk": info["risk"],
+                "meal": info.get("meal", 0),
+                "risk": info.get("risk", 0),
             })
             logging.info(f"Action taken: {action}, Blood Glucose: {observation[0]}, Reward: {reward}")
             

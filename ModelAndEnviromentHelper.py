@@ -234,7 +234,7 @@ class TD3HyperparameterTuner:
                     f.write("-" * 50 + "\n")
         print(f"Results saved to {filename}")
 class HyperparameterTuner:
-    def __init__(self, low_env, inner_env, high_env, n_trials=50, timesteps=500, n_eval_episodes=5):
+    def __init__(self, low_env, inner_env, high_env, n_trials=50, timesteps=1000000, n_eval_episodes=5):
         """
         Initialize the hyperparameter tuner for A2C models.
 
