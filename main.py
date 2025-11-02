@@ -6,7 +6,7 @@ from simulation_core import (
 # === Main Entry Point ===
 def main():
     # Setup Config 
-    config = SimulationConfig(model_type="TD3")
+    config = SimulationConfig(model_type="PPO")
     patient_params = config.get_patient_params()
     print(f"Patient {config.patient_name} | BW: {patient_params['bw']} kg")
 
