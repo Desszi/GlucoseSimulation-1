@@ -17,40 +17,55 @@ from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
 
 
-TIMESTEPS = 100000  
+TIMESTEPS = 500  
 PATIENT_NAME = "adult#002"
 
 # === Utility ===
 
-def generated_day(bw):
+def generated_day(bw, n_meals: int = 20):
+    """Generál egy napnyi étkezés listát.
+
+    Visszatér: list[list[int]] ahol elem: [CHO_gramm, start_time_perc, duration_perc].
+    Eredeti 6 étkezéses statikus logikát lecseréljük egy általános  n_meals  generátorra.
+
+    Heurisztikák:
+      - Étkezések egyenletesen osztva a napban (24*60 perc) jitterrel.
+      - Minden 4. nagyobb (főétkezés), többi snack.
+      - CH mennyiség testtömeg (bw) alapú skálázással.
+    """
     from scipy import stats
-    meal = {
-        "probability": [0.95, 0.3, 0.95, 0.3, 0.95, 0.3],
-        "upperbound": [i * 60 for i in [9, 10, 14, 16, 20, 23]],
-        "lowerbound": [i * 60 for i in [5, 9, 10, 14, 16, 20]],
-        "upperboundmealtime": [30, 10, 30, 10, 30, 10],
-        "loverboundmealtime": [10, 5, 10, 5, 10, 5],
-        "meanmealtime": [20, 7.5, 20, 7, 20, 7.5],
-        "meantime": [i * 60 for i in [7, 9.5, 12, 15, 18, 21.5]],
-        "variancemealtime": [5, 2, 5, 2, 5, 2],
-        "variancetime": [60, 30, 60, 30, 60, 30],
-        "meanamount": [i * bw for i in [0.7, 0.15, 1.1, 0.15, 1.25, 0.15]],
-        "varianceamount": [i * bw * 0.15 for i in [0.7, 0.15, 1.1, 0.15, 1.25, 0.15]],
-        "E": []
-    }
-    for i in range(6):
-        if randint(0, 100) / 100 < meal["probability"][i]:
-            e = max(0, stats.norm(loc=meal["meanamount"][i], scale=meal["varianceamount"][i]).rvs())
-            t = stats.truncnorm(
-                (meal["lowerbound"][i] - meal["meantime"][i]) / meal["variancetime"][i],
-                (meal["upperbound"][i] - meal["meantime"][i]) / meal["variancetime"][i],
-                loc=meal["meantime"][i], scale=meal["variancetime"][i]).rvs()
-            h = stats.truncnorm(
-                (meal["loverboundmealtime"][i] - meal["meanmealtime"][i]) / meal["variancemealtime"][i],
-                (meal["upperboundmealtime"][i] - meal["meanmealtime"][i]) / meal["variancemealtime"][i],
-                loc=meal["meanmealtime"][i], scale=meal["variancemealtime"][i]).rvs()
-            meal["E"].append([int(round(e)), int(round(t)), int(round(h))])
-    return meal["E"]
+    events = []
+    day_minutes = 24 * 60
+    base_interval = day_minutes / n_meals
+
+    for i in range(n_meals):
+        center = (i + 0.5) * base_interval
+        # idő jitter: normális eloszlás, ±20% szórás, klippelve
+        t = stats.norm(loc=center, scale=base_interval * 0.2).rvs()
+        t = int(round(max(0, min(day_minutes - 1, t))))
+
+        # időtartam (meal absorption window) 5–40 perc
+        h = stats.norm(loc=15, scale=5).rvs()
+        h = int(round(max(5, min(40, h))))
+
+        # CH mennyiség skálázás
+        if i % 4 == 0:             # reggeli / ebéd / vacsora-szerű nagyobb
+            mean_factor = 0.8 if i % 8 == 0 else 0.6
+        elif i % 4 == 2:           # közepes (pl. ebéd / vacsora előtti snack)
+            mean_factor = 0.4
+        else:                      # kis snack
+            mean_factor = 0.25
+
+        mean_amount = bw * mean_factor
+        std_amount = mean_amount * 0.20
+        e = stats.norm(loc=mean_amount, scale=std_amount).rvs()
+        e = int(round(max(5, e)))  # min 5g hogy ne legyen túl sok 0
+
+        events.append([e, t, h])
+
+    # idő szerint rendezés (bár alapból is az, jitter miatt lehet felcserélődés)
+    events.sort(key=lambda x: x[1])
+    return events
 
 
 def get_model_path(base_dir: Path, model_name: str) -> Path:
