@@ -17,6 +17,7 @@ class CustomT1DSimGymnaisumEnv(T1DSimGymnaisumEnv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.current_time = datetime(2025, 1, 1, 0, 0, 0)#Szimuláció kezdő ideje éjfél
+        self.last_bg = None  # trend számításhoz
 
     def step(self, action):
         observation, reward, terminated, truncated, info = super().step(action)
@@ -25,6 +26,18 @@ class CustomT1DSimGymnaisumEnv(T1DSimGymnaisumEnv):
         bg_tolerance = 20         
         self.current_time += timedelta(minutes=3)
         deviation = abs(blood_glucose - target_bg)
+
+        # --- Glükóz trend + egyszerű előrejelzés ---
+        slope = 0.0
+        if self.last_bg is not None:
+            slope = blood_glucose - self.last_bg  # mg/dL / 3 perc
+        self.last_bg = blood_glucose
+        # 36 perces (12 lépés) előrevetítés csak pozitív slope esetén
+        horizon_steps = 12
+        predicted_peak = blood_glucose + max(0.0, slope) * horizon_steps
+        # Dinamikus emelkedés küszöbök (konzervatív kezdet) – a későbbi CH logikához előkészítés
+        mild_thr = 2.0
+        fast_thr = 5.0
 
         #00:00 és 06:00 közötti szigorúbb bünti       
         if self.current_time.hour < 6:
@@ -49,8 +62,18 @@ class CustomT1DSimGymnaisumEnv(T1DSimGymnaisumEnv):
             
             self.last_blood_glucose = blood_glucose
 
-        
-        print(f"[{self.current_time.strftime('%H:%M')}] Blood Glucose: {blood_glucose}, Reward: {reward}")
+        # --- Prediktív anticipációs jutalom / késlekedés bünti ---
+        anticip_bonus = 0.0
+        delay_penalty = 0.0
+        # Ha várható, hogy a következő ~36 percben 180 fölé menne, jutalmazzuk az inzulint
+        if predicted_peak > 180:
+            if slope > mild_thr and action > 0:
+                anticip_bonus = 3.0  # kezdeti érték (később skálázható CH-val)
+            if slope > fast_thr and action == 0:
+                delay_penalty = -4.0
+        reward += anticip_bonus + delay_penalty
+
+        print(f"[{self.current_time.strftime('%H:%M')}] BG:{blood_glucose:.1f} Reward:{reward:.2f} Slope:{slope:.1f} PredPeak:{predicted_peak:.1f} Ant:{anticip_bonus:.1f} Del:{delay_penalty:.1f}")
 
         return observation, reward, terminated, truncated, info
  
