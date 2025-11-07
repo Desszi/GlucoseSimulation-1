@@ -15,7 +15,7 @@ def main():
     print("=" * 60)
 
     model_type = input("Choose model type (A2C / TD3): ").strip().upper()
-    if model_type not in {"A2C", "TD3"}:
+    if model_type not in {"A2C", "TD3", "PPO"}:
         model_type = "A2C"
 
     use_existing_models = input("Do you want to load existing trained models? (y/n): ").strip().lower() == "y"

@@ -50,6 +50,19 @@ def main():
     metrics = metrics_calc.calculate(log_data)
     metrics_calc.save(metrics)
 
+    # --- Auto-generate WMA visualization plot if LogData.csv exists ---
+    try:
+        from pathlib import Path
+        from analysis.wma_visualization import main as wma_plot_main
+        log_csv_path = Path(env_mgr.path_to_results) / 'LogData.csv'
+        if log_csv_path.exists():
+            print('[Main] Generating WMA plot...')
+            wma_plot_main(log_csv_path)
+        else:
+            print(f'[Main] LogData.csv not found at {log_csv_path}, skipping WMA plot.')
+    except Exception as e:
+        print(f'[Main] WMA plot generation skipped due to error: {e}')
+
     env.close()
 
 

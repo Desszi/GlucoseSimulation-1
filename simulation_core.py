@@ -22,7 +22,7 @@ PATIENT_NAME = "adult#002"
 
 # === Utility ===
 
-def generated_day(bw, n_meals: int = 20):
+def generated_day(bw, n_meals: int = 4):
     """Generál egy napnyi étkezés listát.
 
     Visszatér: list[list[int]] ahol elem: [CHO_gramm, start_time_perc, duration_perc].
@@ -148,7 +148,9 @@ def clear_console():
 class SimulationConfig:
     def __init__(self, model_type="TD3"):
         self.save_to_csv = True
-        self.save_video = True
+        # Video mentés kikapcsolva alapértelmezetten, mert a generálás közben lefagy/elhasal.
+        # Kapcsold vissza ha szükséges: config.save_video = True a main-ben.
+        self.save_video = False
         self.render_sim = True
         self.patient_name = PATIENT_NAME
         self.start_time = datetime(2025, 1, 1, 0, 0, 0)
