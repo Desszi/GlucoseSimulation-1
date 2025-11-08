@@ -1,0 +1,20 @@
+Kritikus események statisztikái - innermodel
+==================================================
+
+Hypoglycémia (<70 mg/dL): 0 esemény
+
+Súlyos hyperglycémia (>250 mg/dL): 18 esemény
+  BG tartomány: 250.1 - 291.0 mg/dL
+  BG átlag: 268.6 mg/dL
+  Időpontok: [230, 231, 232, 233, 234, 235, 236, 237, 238, 239]...
+
+Hyperglycémia (180-250 mg/dL): 59 esemény
+  BG tartomány: 181.6 - 249.3 mg/dL
+  BG átlag: 212.1 mg/dL
+  Időpontok: [123, 124, 125, 126, 127, 128, 129, 130, 131, 132]...
+
+Gyors emelkedés (>5 mg/dL/3min): 22 esemény
+  BG tartomány: 97.1 - 287.5 mg/dL
+  BG átlag: 176.3 mg/dL
+  Időpontok: [124, 225, 226, 227, 228, 239, 240, 241, 242, 299]...
+
