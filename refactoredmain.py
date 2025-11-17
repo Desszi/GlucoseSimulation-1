@@ -4,6 +4,7 @@ from colorama import Fore, Style, init as init_colorama
 import imageio
 import time
 import numpy as np
+import optuna
 import pandas as pd
 import gymnasium
 import random
@@ -14,7 +15,7 @@ from stable_baselines3 import A2C, TD3
 from stable_baselines3.common.noise import NormalActionNoise
 import logging
 import pkg_resources
-#import optuna
+import optuna
 from stable_baselines3.common.evaluation import evaluate_policy
 import ast
 from stable_baselines3.common.callbacks import BaseCallback

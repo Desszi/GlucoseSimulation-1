@@ -1,0 +1,35 @@
+<svg width="180" height="180" viewBox="0 0 180 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vércsepp illusztráció">
+  <defs>
+    <linearGradient id="drop" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#dc2626" />
+      <stop offset="100%" stop-color="#991b1b" />
+    </linearGradient>
+    <linearGradient id="bubble" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#0d946a" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="180" height="180" rx="28" fill="#1e293b" />
+  <!-- Blood drop -->
+  <path d="M90 32 C90 32 60 80 60 105 C60 122 73 136 90 136 C107 136 120 122 120 105 C120 80 90 32 90 32Z" fill="url(#drop)" stroke="#0f172a" stroke-width="3" />
+  <!-- Highlight -->
+  <path d="M85 55 C75 75 70 90 70 104 C70 115 78 124 90 124" stroke="#fca5a5" stroke-width="4" stroke-linecap="round" opacity="0.5" />
+  <!-- Sugar cube (isometric) -->
+  <g transform="translate(30,42)">
+    <!-- top face -->
+    <polygon points="0,18 18,8 36,18 18,28" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2" />
+    <!-- left face -->
+    <polygon points="0,18 0,34 18,44 18,28" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="2" />
+    <!-- right face -->
+    <polygon points="36,18 36,34 18,44 18,28" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="2" />
+    <!-- subtle sugar texture dots -->
+    <circle cx="10" cy="22" r="1.5" fill="#94a3b8" />
+    <circle cx="26" cy="17" r="1.5" fill="#94a3b8" />
+    <circle cx="22" cy="25" r="1.5" fill="#94a3b8" />
+    <circle cx="14" cy="30" r="1.5" fill="#94a3b8" />
+  </g>
+  <!-- Decorative dots -->
+  <circle cx="34" cy="132" r="4" fill="#10b981" opacity="0.7" />
+  <circle cx="150" cy="56" r="5" fill="#10b981" opacity="0.6" />
+  <circle cx="142" cy="118" r="3" fill="#10b981" opacity="0.5" />
+</svg>

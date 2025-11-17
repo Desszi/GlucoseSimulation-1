@@ -12,6 +12,63 @@ from random import randint
 from colorama import Fore
 from simglucose.simulation.scenario import CustomScenario
 from gymnasium.envs.registration import register
+
+# === Utility ===
+
+TIMESTEPS = 5000
+PATIENT_NAME = "adult#002"
+
+def generated_day(bw, n_meals: int = 4):
+    """Generate a day's meal schedule.
+    Returns list of [CHO_grams, start_time_minute, duration_minute].
+    """
+    from scipy import stats
+    events = []
+    day_minutes = 24 * 60
+    base_interval = day_minutes / n_meals
+    for i in range(n_meals):
+        center = (i + 0.5) * base_interval
+        t = stats.norm(loc=center, scale=base_interval * 0.2).rvs()
+        t = int(round(max(0, min(day_minutes - 1, t))))
+        h = stats.norm(loc=15, scale=5).rvs()
+        h = int(round(max(5, min(40, h))))
+        if i % 4 == 0:
+            mean_factor = 0.8 if i % 8 == 0 else 0.6
+        elif i % 4 == 2:
+            mean_factor = 0.4
+        else:
+            mean_factor = 0.25
+        mean_amount = bw * mean_factor
+        std_amount = mean_amount * 0.20
+        e = stats.norm(loc=mean_amount, scale=std_amount).rvs()
+        e = int(round(max(5, e)))
+        events.append([e, t, h])
+    events.sort(key=lambda x: x[1])
+    return events
+
+def get_model_path(base_dir: Path, model_name: str) -> Path:
+    return base_dir / f"{model_name}.zip"
+
+def clear_console():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+class SimulationConfig:
+    def __init__(self, model_type="TD3"):
+        self.save_to_csv = True
+        self.save_video = False
+        self.render_sim = True
+        self.patient_name = PATIENT_NAME
+        self.start_time = datetime(2025, 1, 1, 0, 0, 0)
+        self.time_steps = TIMESTEPS
+        self.max_episode_steps = 1000000
+        self.model_type = model_type
+        self.model_name = model_type
+
+    def get_patient_params(self):
+        patient_params_file = pkg_resources.resource_filename("simglucose", "params/vpatient_params.csv")
+        patient_params = pd.read_csv(patient_params_file)
+        bw = patient_params[patient_params["Name"] == self.patient_name]["BW"].iloc[0]
+        return {"bw": bw}
 from stable_baselines3 import A2C, TD3
 from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
@@ -318,6 +375,46 @@ class SimulationRunner:
         self.log_data = []
         self.insulin_timestamps = []
         self.insulin_history = []  # list of (time, dose) for IOB calculation
+        # Postprandiális fázis tracking
+        self.active_meals = []  # list of dict: {'start': datetime, 'carbs': float, 'end': datetime}
+
+    def _update_postprandial_state(self, current_time):
+        """Számolja a legaktívabb étkezés posztprandiális fázisát.
+        Fázisok per étkezés kezdete t0:
+          Early:   0 - 30 perc
+          Mid:     30 - 120 perc
+          Late:    120 - 240 perc
+        Egy étkezés intensity skálája: min(1, carbs/60).
+        Visszaad: phase_type (0=None,1=Early,2=Mid,3=Late), phase_progress (0-1), intensity.
+        Ha több aktív étkezés van, a legnagyobb intensity-űt választjuk.
+        """
+        # prune finished meals (>240 min)
+        self.active_meals = [m for m in self.active_meals if (current_time - m['start']).total_seconds()/60.0 <= 240]
+        if not self.active_meals:
+            return 0, 0.0, 0.0
+        # pick the highest intensity meal
+        def meal_state(m):
+            elapsed_min = (current_time - m['start']).total_seconds()/60.0
+            intensity = min(1.0, m['carbs']/60.0)
+            if elapsed_min < 0:
+                return (0, 0.0, intensity)
+            if elapsed_min <= 30:
+                phase = 1
+                progress = elapsed_min/30.0
+            elif elapsed_min <= 120:
+                phase = 2
+                progress = (elapsed_min-30)/(90.0)  # Mid window length 90
+            elif elapsed_min <= 240:
+                phase = 3
+                progress = (elapsed_min-120)/(120.0)  # Late window length 120
+            else:
+                phase = 0
+                progress = 0.0
+            return (phase, progress, intensity)
+        # choose meal with max intensity
+        states = [(meal_state(m), m) for m in self.active_meals]
+        (phase_type, phase_progress, intensity), chosen_meal = max(states, key=lambda x: x[0][2])
+        return phase_type, phase_progress, intensity
 
     def select_action(self, obs):
         value = obs[0]
@@ -466,6 +563,43 @@ class SimulationRunner:
             obs, reward, terminated, truncated, info = self.env.step(dose)
             risk = info.get("risk", 0)
 
+            # Étkezés jelzés kezelése: ha meal >0 az info-ban, új aktív étkezés felvétele
+            meal_carbs = info.get("meal", 0) or 0
+            if meal_carbs > 0:
+                self.active_meals.append({
+                    'start': current_time,
+                    'carbs': float(meal_carbs),
+                    'end': current_time + timedelta(minutes=240)
+                })
+
+            phase_type, phase_progress, phase_intensity = self._update_postprandial_state(current_time)
+
+            # Egyszerű reward shaping módosítás a fázis alapján (nem írjuk felül, inkább kiegészítjük)
+            # Early: anticipációs jutalom, ha BG emelkedik túl meredeken -> kis bünti; stabil enyhe emelkedés: bónusz
+            # Mid: semleges
+            # Late: stabilitás jutalom (közel a cél tartományhoz) + enyhe korrekciós bónusz
+            bg_value = obs[0]
+            slope_proxy = 0.0
+            if len(self.log_data) > 0:
+                prev_bg = self.log_data[-1]["blood glucose"]
+                slope_proxy = bg_value - prev_bg
+            shaped_bonus = 0.0
+            TARGET_LOW = 70
+            TARGET_HIGH = 130
+            if phase_type == 1:  # Early
+                # ha meredek emelkedés (> +8 mg/dL lépésenként) bünti, különben kicsi bónusz
+                if slope_proxy > 8:
+                    shaped_bonus -= 0.5 * phase_intensity
+                else:
+                    shaped_bonus += 0.3 * phase_intensity
+            elif phase_type == 3:  # Late
+                if TARGET_LOW <= bg_value <= TARGET_HIGH:
+                    shaped_bonus += 0.4 * phase_intensity
+                # enyhe csökkenés (negatív slope kis abszolút értékkel) pozitív jelzés
+                if -5 <= slope_proxy <= 0:
+                    shaped_bonus += 0.2 * phase_intensity
+            reward = reward + shaped_bonus
+
             self.log_data.append({
                 "selected_model": selected_model,
                 "raw_action": raw_action,
@@ -474,7 +608,12 @@ class SimulationRunner:
                 "reward": reward,
                 "meal": info.get("meal", 0),
                 "risk": risk,
-                "time": current_time.strftime("%H:%M")
+                "time": current_time.strftime("%H:%M"),
+                "phase_type": phase_type,
+                "phase_progress": phase_progress,
+                "phase_intensity": phase_intensity,
+                "shaped_bonus": shaped_bonus,
+                "bg_slope": slope_proxy
             })
 
         # After run, produce a small summary of model selection and dosing

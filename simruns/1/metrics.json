@@ -1,0 +1,9 @@
+{
+  "TIR_percent": 74.0,
+  "Hypo_events": 0,
+  "Hyper_events": 0,
+  "Avg_BG": 114.79492065009234,
+  "Samples": 300,
+  "fallback": true,
+  "error": "Namespace simglucose not found. Have you installed the proper package for simglucose?"
+}
