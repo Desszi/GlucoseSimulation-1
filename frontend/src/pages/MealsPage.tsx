@@ -37,10 +37,56 @@ export const MealsPage: React.FC = () => {
     setForm(f => ({ ...f, [key]: value }));
   }
 
+  function normalizeTimestamp(raw: string): string {
+    const v = raw.trim();
+    if (!v) return '';
+    // Accept HH:MM -> today
+    if (/^\d{1,2}:\d{2}$/.test(v)) {
+      const now = new Date();
+      const [h, m] = v.split(':');
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}T${h.padStart(2,'0')}:${m}:00`;
+    }
+    // Accept YYYY-MM-DD HH:MM -> convert to ISO (space separated)
+    if (/^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}$/.test(v)) {
+      const [d, hm] = v.split(' ');
+      const [h, m] = hm.split(':');
+      return `${d}T${h.padStart(2,'0')}:${m}:00`;
+    }
+    // Accept YYYY.MM.DD HH:MM (localized placeholder) -> convert
+    if (/^\d{4}\.\d{2}\.\d{2} \d{1,2}:\d{2}$/.test(v)) {
+      const [d, hm] = v.split(' ');
+      const [yyyy, mo, da] = d.split('.');
+      const [h, m] = hm.split(':');
+      return `${yyyy}-${mo}-${da}T${h.padStart(2,'0')}:${m}:00`;
+    }
+    // Accept YYYY-MM-DDTHH:MM (without seconds)
+    if (/^\d{4}-\d{2}-\d{2}T\d{1,2}:\d{2}$/.test(v)) {
+      return v + ':00';
+    }
+    // If already looks like ISO with seconds just return
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(v)) return v;
+    return v; // fallback
+  }
+
+  function formatDisplay(ts: string): string {
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleString('hu-HU', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+      });
+    } catch { return ts; }
+  }
+
   async function submitNew(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const created = await post<Meal>('/meals/', form);
+      const payload = { ...form, timestamp: normalizeTimestamp(form.timestamp) };
+      const created = await post<Meal>('/meals/', payload);
       setMeals(m => [...m, created]);
       setForm({ timestamp: '', carbs_g: 0, meal_type: '', notes: '' });
     } catch (e: any) {
@@ -52,7 +98,8 @@ export const MealsPage: React.FC = () => {
     e.preventDefault();
     if (editingId == null) return;
     try {
-      const updated = await patch<Meal>(`/meals/${editingId}`, form);
+      const payload = { ...form, timestamp: normalizeTimestamp(form.timestamp) };
+      const updated = await patch<Meal>(`/meals/${editingId}`, payload);
       setMeals(m => m.map(x => x.id === editingId ? updated : x));
       setEditingId(null);
       setForm({ timestamp: '', carbs_g: 0, meal_type: '', notes: '' });
@@ -97,7 +144,7 @@ export const MealsPage: React.FC = () => {
               <tbody>
                 {meals.map(m => (
                   <tr key={m.id}>
-                    <td style={tdStyle}>{m.timestamp}</td>
+                    <td style={tdStyle}>{formatDisplay(m.timestamp)}</td>
                     <td style={tdStyle}>{m.carbs_g}</td>
                     <td style={tdStyle}>{m.meal_type}</td>
                     <td style={tdStyle}>{m.notes}</td>
@@ -119,8 +166,14 @@ export const MealsPage: React.FC = () => {
           <h3 style={{ marginTop: 0 }}>{editingId ? 'Étel szerkesztése' : 'Új étel'}</h3>
           <form onSubmit={editingId ? submitEdit : submitNew} style={{ fontSize: 13 }}>
             <div style={{ marginBottom: 8 }}>
-              <label>Időpont (ISO)</label><br />
-              <input value={form.timestamp} onChange={e => updateForm('timestamp', e.target.value)} required style={inputStyle} placeholder="2025-11-17T08:30:00" />
+              <label>Időpont</label><br />
+              <input
+                value={form.timestamp}
+                onChange={e => updateForm('timestamp', e.target.value)}
+                required
+                style={inputStyle}
+                placeholder={new Date().toLocaleString('hu-HU', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '')}
+              />
             </div>
             <div style={{ marginBottom: 8 }}>
               <label>CH (g)</label><br />

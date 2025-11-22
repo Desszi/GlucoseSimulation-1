@@ -1,0 +1,13 @@
+Kritikus események statisztikái - highmodel
+==================================================
+
+Vércukor tetőpontok (lokális max >160): 5 esemény
+  BG tartomány: 162.0 - 229.9 mg/dL
+  BG átlag: 193.6 mg/dL
+  Időpontok: [256, 268, 109, 98, 437]...
+
+Vércukor mélypontok (lokális min <100): 4 esemény
+  BG tartomány: 88.2 - 95.7 mg/dL
+  BG átlag: 92.9 mg/dL
+  Időpontok: [187, 157, 52, 178]...
+

@@ -4,3 +4,4 @@ sqlmodel
 pydantic
 passlib[bcrypt]
 python-jose
+# RL extra függőségek külön: lásd requirements-rl.txt

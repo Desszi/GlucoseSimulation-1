@@ -101,6 +101,26 @@ def run_sim(data: SimulationRunCreate, session: Session = Depends(get_session), 
     session.refresh(sim)
     return sim
 
+@router.post("/rl")
+def run_rl(meals: list[dict], session: Session = Depends(get_session), current_user: User = Depends(get_current_user), force_train: bool = False):
+    """24 órás RL szimuláció a UI által megadott étkezésekkel.
+    Body: list[{timestamp: 'HH:MM' vagy ISO, carbs_g: int}]
+    Query: force_train.
+    A modell típusa mindig PPO (main.py konzisztencia), felhasználó nem választhat algoritmust.
+    Lazy import a nehéz RL modulra, így a backend elindul akkor is, ha a RL függőségek még nincsenek telepítve."""
+    if current_user.role != UserRole.patient:
+        raise HTTPException(status_code=403, detail="Not a patient user")
+    try:
+        from ...services.rl_simulation import run_rl_full_day  # lazy import
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RL module import failed: {type(e).__name__}: {e}")
+    try:
+        result = run_rl_full_day(meals, force_train=force_train)
+    except Exception as e:
+        logger.exception("RL simulation failed")
+        raise HTTPException(status_code=500, detail=f"RL simulation error: {type(e).__name__}: {e}")
+    return result
+
 @router.get("/runs", response_model=list[SimulationRunRead])
 def list_runs(session: Session = Depends(get_session), current_user: User = Depends(get_current_user)):
     if current_user.role != UserRole.patient:

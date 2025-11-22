@@ -1,0 +1,14 @@
+{
+  "TIR_percent": 76.6,
+  "Hypo_events": 0,
+  "Hyper_events": 1,
+  "Avg_BG": 112.62611498815927,
+  "Samples": 500,
+  "mode": "simple-fallback",
+  "fallback": true,
+  "reason": "env creation failed",
+  "Peak_BG": 180.8206099271226,
+  "Time_to_Peak_min": 223,
+  "StdDev_BG": 17.60490030917711,
+  "AUC_BG": 56313.057494079636
+}

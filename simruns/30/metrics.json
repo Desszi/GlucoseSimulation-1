@@ -1,0 +1,13 @@
+{
+  "TIR_percent": 100.0,
+  "Hypo_events": 0,
+  "Hyper_events": 0,
+  "Avg_BG": 110.49521774866733,
+  "Samples": 1440,
+  "model": "synthetic_absorption",
+  "fallback": false,
+  "Peak_BG": 115.31617531483106,
+  "Time_to_Peak_min": 750,
+  "StdDev_BG": 0.8685331027139319,
+  "AUC_BG": 159113.1135580807
+}

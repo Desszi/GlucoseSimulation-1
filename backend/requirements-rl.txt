@@ -1,0 +1,10 @@
+# Opcionális RL és szimulációs függőségek
+stable-baselines3
+gymnasium
+simglucose
+colorama
+imageio
+pandas
+numpy
+Pillow
+scipy

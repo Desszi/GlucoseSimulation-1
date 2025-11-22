@@ -74,7 +74,7 @@ from stable_baselines3.common.noise import NormalActionNoise
 from stable_baselines3.common.callbacks import BaseCallback
 
 
-TIMESTEPS = 5000  
+TIMESTEPS = 500  
 PATIENT_NAME = "adult#002"
 
 # === Utility ===

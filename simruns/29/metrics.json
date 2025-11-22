@@ -1,0 +1,16 @@
+{
+  "TIR_percent": 100.0,
+  "Hypo_events": 0,
+  "Hyper_events": 0,
+  "Avg_BG": 110.53966472134276,
+  "Samples": 1440,
+  "Total_Insulin": 0.0,
+  "Doses_Count": 0,
+  "Mean_Dose": 0.0,
+  "mode": "rl-heuristic",
+  "fallback": false,
+  "Peak_BG": 116.98024721316195,
+  "Time_to_Peak_min": 750,
+  "StdDev_BG": 2.4807437900452673,
+  "AUC_BG": 159177.11719873358
+}
